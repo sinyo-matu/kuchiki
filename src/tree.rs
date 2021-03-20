@@ -155,7 +155,7 @@ impl Drop for Node {
         // Sharing `stack` between these two calls is not necessary,
         // but it allows re-using memory allocations.
         let mut stack = Vec::new();
-        if let Some(rc) = self.first_child.take() {
+        if let Some(rc) = self.first_child.take_if_unique_strong() {
             non_recursive_drop_unique_rc(rc, &mut stack);
         }
         if let Some(rc) = self.next_sibling.take_if_unique_strong() {
