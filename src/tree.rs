@@ -3,7 +3,7 @@ use html5ever::QualName;
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::ops::Deref;
-use std::rc::{Rc, Weak};
+use std::sync::{Arc, Weak};
 
 use crate::attributes::{Attribute, Attributes, ExpandedName};
 use crate::cell_extras::*;
@@ -93,7 +93,7 @@ impl DocumentData {
 /// programs typically hold a strong reference to the root of a document
 /// until they’re done with that document.
 #[derive(Clone, Debug)]
-pub struct NodeRef(pub Rc<Node>);
+pub struct NodeRef(pub Arc<Node>);
 
 impl Deref for NodeRef {
     type Target = Node;
@@ -117,8 +117,8 @@ impl PartialEq for NodeRef {
 pub struct Node {
     parent: Cell<Option<Weak<Node>>>,
     previous_sibling: Cell<Option<Weak<Node>>>,
-    next_sibling: Cell<Option<Rc<Node>>>,
-    first_child: Cell<Option<Rc<Node>>>,
+    next_sibling: Cell<Option<Arc<Node>>>,
+    first_child: Cell<Option<Arc<Node>>>,
     last_child: Cell<Option<Weak<Node>>>,
     data: NodeData,
 }
@@ -155,14 +155,14 @@ impl Drop for Node {
         // Sharing `stack` between these two calls is not necessary,
         // but it allows re-using memory allocations.
         let mut stack = Vec::new();
-        if let Some(rc) = self.first_child.take_if_unique_strong() {
+        if let Some(rc) = self.first_child.take() {
             non_recursive_drop_unique_rc(rc, &mut stack);
         }
         if let Some(rc) = self.next_sibling.take_if_unique_strong() {
             non_recursive_drop_unique_rc(rc, &mut stack);
         }
 
-        fn non_recursive_drop_unique_rc(mut rc: Rc<Node>, stack: &mut Vec<Rc<Node>>) {
+        fn non_recursive_drop_unique_rc(mut rc: Arc<Node>, stack: &mut Vec<Arc<Node>>) {
             loop {
                 if let Some(child) = rc.first_child.take_if_unique_strong() {
                     stack.push(rc);
@@ -196,7 +196,7 @@ impl NodeRef {
     /// Create a new node.
     #[inline]
     pub fn new(data: NodeData) -> NodeRef {
-        NodeRef(Rc::new(Node {
+        NodeRef(Arc::new(Node {
             parent: Cell::new(None),
             first_child: Cell::new(None),
             last_child: Cell::new(None),
@@ -405,8 +405,8 @@ impl NodeRef {
     /// The new child is detached from its previous position.
     pub fn append(&self, new_child: NodeRef) {
         new_child.detach();
-        new_child.parent.replace(Some(Rc::downgrade(&self.0)));
-        if let Some(last_child_weak) = self.last_child.replace(Some(Rc::downgrade(&new_child.0))) {
+        new_child.parent.replace(Some(Arc::downgrade(&self.0)));
+        if let Some(last_child_weak) = self.last_child.replace(Some(Arc::downgrade(&new_child.0))) {
             if let Some(last_child) = last_child_weak.upgrade() {
                 new_child.previous_sibling.replace(Some(last_child_weak));
                 debug_assert!(last_child.next_sibling.is_none());
@@ -423,16 +423,16 @@ impl NodeRef {
     /// The new child is detached from its previous position.
     pub fn prepend(&self, new_child: NodeRef) {
         new_child.detach();
-        new_child.parent.replace(Some(Rc::downgrade(&self.0)));
+        new_child.parent.replace(Some(Arc::downgrade(&self.0)));
         if let Some(first_child) = self.first_child.take() {
             debug_assert!(first_child.previous_sibling.is_none());
             first_child
                 .previous_sibling
-                .replace(Some(Rc::downgrade(&new_child.0)));
+                .replace(Some(Arc::downgrade(&new_child.0)));
             new_child.next_sibling.replace(Some(first_child));
         } else {
             debug_assert!(self.first_child.is_none());
-            self.last_child.replace(Some(Rc::downgrade(&new_child.0)));
+            self.last_child.replace(Some(Arc::downgrade(&new_child.0)));
         }
         self.first_child.replace(Some(new_child.0));
     }
@@ -445,18 +445,18 @@ impl NodeRef {
         new_sibling.parent.replace(self.parent.clone_inner());
         new_sibling
             .previous_sibling
-            .replace(Some(Rc::downgrade(&self.0)));
+            .replace(Some(Arc::downgrade(&self.0)));
         if let Some(next_sibling) = self.next_sibling.take() {
             debug_assert!(next_sibling.previous_sibling().unwrap() == *self);
             next_sibling
                 .previous_sibling
-                .replace(Some(Rc::downgrade(&new_sibling.0)));
+                .replace(Some(Arc::downgrade(&new_sibling.0)));
             new_sibling.next_sibling.replace(Some(next_sibling));
         } else if let Some(parent) = self.parent() {
             debug_assert!(parent.last_child().unwrap() == *self);
             parent
                 .last_child
-                .replace(Some(Rc::downgrade(&new_sibling.0)));
+                .replace(Some(Arc::downgrade(&new_sibling.0)));
         }
         self.next_sibling.replace(Some(new_sibling.0));
     }
@@ -470,7 +470,7 @@ impl NodeRef {
         new_sibling.next_sibling.replace(Some(self.0.clone()));
         if let Some(previous_sibling_weak) = self
             .previous_sibling
-            .replace(Some(Rc::downgrade(&new_sibling.0)))
+            .replace(Some(Arc::downgrade(&new_sibling.0)))
         {
             if let Some(previous_sibling) = previous_sibling_weak.upgrade() {
                 new_sibling
